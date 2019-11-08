@@ -31,20 +31,24 @@ virt-check
 
 # Detect Operating System
 function dist-check() {
-  if [ -e /etc/centos-release ]; then
+    if [ -e /etc/centos-release ]; then
     DISTRO="CentOS"
-  elif [ -e /etc/debian_version ]; then
+    elif [ -e /etc/debian_version ]; then
+    if [ "$(uname -m)" == "aarch64" ]; then
+    DISTRO="Debarm64"
+    else
     DISTRO=$(lsb_release -is)
-  elif [ -e /etc/arch-release ]; then
+    fi
+    elif [ -e /etc/arch-release ]; then
     DISTRO="Arch"
-  elif [ -e /etc/fedora-release ]; then
+    elif [ -e /etc/fedora-release ]; then
     DISTRO="Fedora"
-  elif [ -e /etc/redhat-release ]; then
+    elif [ -e /etc/redhat-release ]; then
     DISTRO="Redhat"
-  else
+    else
     echo "Your distribution is not supported (yet)."
     exit
-  fi
+    fi
 }
 
 # Check Operating System
@@ -58,7 +62,7 @@ if [ ! -f "$WG_CONFIG" ]; then
   # Yes or No For Questions
   INTERACTIVE=${INTERACTIVE:-yes}
   # Private Subnet Ipv4
-  PRIVATE_SUBNET_V4=${PRIVATE_SUBNET_V4:-"10.8.0.0/24"}
+  PRIVATE_SUBNET_V4=${PRIVATE_SUBNET_V4:-"10.0.0.0/24"}
   # Private Subnet Mask IPv4
   PRIVATE_SUBNET_MASK_V4=$(echo "$PRIVATE_SUBNET_V4" | cut -d "/" -f 2)
   # IPv4 Getaway
@@ -241,8 +245,9 @@ if [ ! -f "$WG_CONFIG" ]; then
     echo "What IPv do you want to use to connect to WireGuard server?"
     echo "   1) IPv4 (Recommended)"
     echo "   2) IPv6 (Advanced)"
-    until [[ "$SERVER_HOST" =~ ^[1-2]$ ]]; do
-      read -rp "IP Choice [1-2]: " -e -i 1 SERVER_HOST
+    echo "   3) Custom Domain (Advanced)"
+    until [[ "$SERVER_HOST" =~ ^[1-3]$ ]]; do
+      read -rp "IP Choice [1-3]: " -e -i 1 SERVER_HOST
     done
     case $SERVER_HOST in
     1)
@@ -250,6 +255,10 @@ if [ ! -f "$WG_CONFIG" ]; then
       ;;
     2)
       SERVER_HOST="[$SERVER_HOST_V6]"
+      ;;
+    3)
+      read -rp "Domain Name: " -e DOMAIN
+      SERVER_HOST="$DOMAIN"
       ;;
     esac
   }
@@ -353,6 +362,12 @@ function install-wireguard-server() {
     printf 'Package: *\nPin: release a=unstable\nPin-Priority: 90\n' >/etc/apt/preferences.d/limit-unstable
     apt-get update
     apt-get install wireguard qrencode linux-headers-"$(uname -r)" haveged curl resolvconf -y
+  elif [ "$DISTRO" == "Debarm64" ]; then
+    apt-get update
+    echo "deb http://deb.debian.org/debian/ unstable main" >/etc/apt/sources.list.d/unstable.list
+    printf 'Package: *\nPin: release a=unstable\nPin-Priority: 500\n' >/etc/apt/preferences.d/limit-unstable
+    apt-get update
+    apt-get install wireguard qrencode haveged curl resolvconf -y
   elif [ "$DISTRO" == "Raspbian" ]; then
     apt-get update
     echo "deb http://deb.debian.org/debian/ unstable main" >/etc/apt/sources.list.d/unstable.list
@@ -400,8 +415,8 @@ function install-wireguard-server() {
     interface: ::0
     max-udp-size: 3072
     access-control: 0.0.0.0/0                 refuse
-    access-control: 10.8.0.0/24               allow
-    private-address: 10.8.0.0/24
+    access-control: 10.0.0.0/24               allow
+    private-address: 10.0.0.0/24
     hide-identity: yes
     hide-version: yes
     harden-glue: yes
@@ -430,8 +445,35 @@ function install-wireguard-server() {
     interface: ::0
     max-udp-size: 3072
     access-control: 0.0.0.0/0                 refuse
-    access-control: 10.8.0.0/24               allow
-    private-address: 10.8.0.0/24
+    access-control: 10.0.0.0/24               allow
+    private-address: 10.0.0.0/24
+    hide-identity: yes
+    hide-version: yes
+    harden-glue: yes
+    harden-dnssec-stripped: yes
+    harden-referral-path: yes
+    unwanted-reply-threshold: 10000000
+    val-log-level: 1
+    cache-min-ttl: 1800
+    cache-max-ttl: 14400
+    prefetch: yes
+    qname-minimisation: yes
+    prefetch-key: yes' >/etc/unbound/unbound.conf
+  elif [ "$DISTRO" == "Debarm64" ]; then
+    # Install Unbound
+    apt-get install unbound unbound-host e2fsprogs -y
+    # Set Config
+    echo 'server:
+    num-threads: 4
+    verbosity: 1
+    root-hints: "/etc/unbound/root.hints"
+    auto-trust-anchor-file: "/var/lib/unbound/root.key"
+    interface: 0.0.0.0
+    interface: ::0
+    max-udp-size: 3072
+    access-control: 0.0.0.0/0                 refuse
+    access-control: 10.0.0.0/24               allow
+    private-address: 10.0.0.0/24
     hide-identity: yes
     hide-version: yes
     harden-glue: yes
@@ -457,8 +499,8 @@ function install-wireguard-server() {
     interface: ::0
     max-udp-size: 3072
     access-control: 0.0.0.0/0                 refuse
-    access-control: 10.8.0.0/24               allow
-    private-address: 10.8.0.0/24
+    access-control: 10.0.0.0/24               allow
+    private-address: 10.0.0.0/24
     hide-identity: yes
     hide-version: yes
     harden-glue: yes
@@ -474,15 +516,15 @@ function install-wireguard-server() {
   elif [[ "$DISTRO" == "CentOS" ]]; then
     # Install Unbound
     yum install unbound unbound-libs -y
-    sed -i 's|# interface: 0.0.0.0$|interface: 10.8.0.1|' /etc/unbound/unbound.conf
-    sed -i 's|# access-control: 127.0.0.0/8 allow|access-control: 10.8.0.1/24 allow|' /etc/unbound/unbound.conf
+    sed -i 's|# interface: 0.0.0.0$|interface: 10.0.0.1|' /etc/unbound/unbound.conf
+    sed -i 's|# access-control: 127.0.0.0/8 allow|access-control: 10.0.0.1/24 allow|' /etc/unbound/unbound.conf
     sed -i 's|# hide-identity: no|hide-identity: yes|' /etc/unbound/unbound.conf
     sed -i 's|# hide-version: no|hide-version: yes|' /etc/unbound/unbound.conf
     sed -i 's|use-caps-for-id: no|use-caps-for-id: yes|' /etc/unbound/unbound.conf
   elif [[ "$DISTRO" == "Fedora" ]]; then
     dnf install unbound unbound-host -y
-    sed -i 's|# interface: 0.0.0.0$|interface: 10.8.0.1|' /etc/unbound/unbound.conf
-    sed -i 's|# access-control: 127.0.0.0/8 allow|access-control: 10.8.0.1/24 allow|' /etc/unbound/unbound.conf
+    sed -i 's|# interface: 0.0.0.0$|interface: 10.0.0.1|' /etc/unbound/unbound.conf
+    sed -i 's|# access-control: 127.0.0.0/8 allow|access-control: 10.0.0.1/24 allow|' /etc/unbound/unbound.conf
     sed -i 's|# hide-identity: no|hide-identity: yes|' /etc/unbound/unbound.conf
     sed -i 's|# hide-version: no|hide-version: yes|' /etc/unbound/unbound.conf
     sed -i 's|use-caps-for-id: no|use-caps-for-id: yes|' /etc/unbound/unbound.conf
@@ -496,8 +538,8 @@ function install-wireguard-server() {
     directory: "/etc/unbound"
     trust-anchor-file: trusted-key.key
     root-hints: root.hints
-    interface: 10.8.0.0
-    access-control: 10.8.0.0 allow
+    interface: 10.0.0.0
+    access-control: 10.0.0.0 allow
     port: 53
     num-threads: 2
     use-caps-for-id: yes
@@ -510,7 +552,7 @@ function install-wireguard-server() {
     # Set DNS Root Servers
     wget -O /etc/unbound/root.hints https://www.internic.net/domain/named.cache
     # Setting Client DNS For Unbound On WireGuard
-    CLIENT_DNS="10.8.0.1"
+    CLIENT_DNS="10.0.0.1"
     # Allow the modification of the file
     chattr -i /etc/resolv.conf
     # Disable previous DNS servers
@@ -539,7 +581,7 @@ fi
     curl -sSL https://install.pi-hole.net | bash
   fi
     # Set Client DNS
-    CLIENT_DNS="10.8.0.1"
+    CLIENT_DNS="10.0.0.1"
 }
 
   # Run The Function
@@ -683,7 +725,7 @@ MTU = $MTU_CHOICE
 PrivateKey = $CLIENT_PRIVKEY
 [Peer]
 AllowedIPs = $CLIENT_ALLOWED_IP
-Endpoint = $SERVER_HOST$SERVER_PORT
+Endpoint = $SERVER_HOST:$SERVER_PORT
 PersistentKeepalive = $NAT_CHOICE
 PresharedKey = $PRESHARED_KEY
 PublicKey = $SERVER_PUBKEY" >"/etc/wireguard/clients"/"$NEW_CLIENT_NAME"-$WIREGUARD_PUB_NIC.conf
@@ -723,6 +765,8 @@ PublicKey = $SERVER_PUBKEY" >"/etc/wireguard/clients"/"$NEW_CLIENT_NAME"-$WIREGU
       if [ "$DISTRO" == "CentOS" ]; then
         yum remove wireguard qrencode haveged unbound unbound-host -y
       elif [ "$DISTRO" == "Debian" ]; then
+        apt-get remove --purge wireguard qrencode haveged unbound unbound-host -y
+      elif [ "$DISTRO" == "Debarm64" ]; then
         apt-get remove --purge wireguard qrencode haveged unbound unbound-host -y
       elif [ "$DISTRO" == "Ubuntu" ]; then
         apt-get remove --purge wireguard qrencode haveged unbound unbound-host -y
