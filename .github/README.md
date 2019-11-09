@@ -5,6 +5,6 @@ This is a fork of complexorganization wireguard installation script with support
 ### Wireguard Server
 sudo required
 ```
-wget https://raw.githubusercontent.com/complexorganizations/wireguard-install/master/wireguard-server.sh
+https://raw.githubusercontent.com/anazhd/wireguard-install/master/wireguard-server.sh
 bash wireguard-server.sh
 ```
